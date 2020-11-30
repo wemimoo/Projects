@@ -1,0 +1,217 @@
+---
+title: "NYC_data project"
+author: "wemomi"
+date: "29/11/2020"
+output: html_document
+---
+
+*Brief description of project*
+This project uses data from the New York Department of Education to understand how schools' demographics affect schools' academic performance as reflected by SAT scores. 
+
+Specifically, the project will explore:
+i. Whether student, teacher and parent perceptions of NYC school quality (high schools only) are related to demographic and academic success metrics?
+ii. Whether students, teachers and parents have similar perceptions of NYC school quality?
+
+The data used for this project were obtained from the following websites:
+1. NYC Schools Data from dataworld (https://data.world/dataquest/nyc-schools-data/workspace/file?filename=combined.csv)
+2. 2011 NYC School Survey (2 datasets) (https://data.cityofnewyork.us/Education/2011-NYC-School-Survey/mnz3-dyi8)
+
+R packages used ("tidyverse", "dplyr")
+```{r, load packages}
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+
+```
+
+
+```{r, import data}
+
+data_a100 <- read_csv("combined.csv") 
+data_b200 <- read_tsv("masterfile11_gened_final.txt") 
+data_c300 <- read_tsv("masterfile11_d75_final.txt")
+```
+
+
+```{r, explore data}
+dim(data_a100)     #479 rows and 30 columns
+#head(data_a100)
+#glimpse(data_a100)
+
+dim(data_b200)     #1646 rows and 1942 columns
+#head(data_b200)  
+#glimpse(data_b200)  
+
+
+dim(data_c300)     #56 rows and 1773 columns
+#head(data_c300)
+#glimpse(data_c300)
+
+```
+
+
+
+```{r, data reduction: select variables of interest}
+
+data_b200 %>% pull(schooltype) %>% unique  ## check school type 
+
+##select high school as school type and gets aggregate perceptions scores for each of the four metrics
+data_b201 <- data_b200 %>% 
+  filter(schooltype == "High School")  %>%   ## restrict to "High School"
+  select(dbn, starts_with("saf"), starts_with("com"), starts_with("eng"), starts_with("aca"))  ## select relevant variable
+
+dim(data_b201)       ## 383 rows 17 variables
+
+##select aggregate scores for the 56 schools in this dataset
+data_c301 <- data_c300 %>% 
+  select(dbn, starts_with("saf"), starts_with("com"), starts_with("eng"), starts_with("aca"))  ## select relevant variable
+
+
+dim(data_c301)       ## 56 rows 17 variables
+
+
+
+
+```
+
+
+
+```{r, combine all 3 dataset into one}
+#data_c301 contains survey response for 56 schools not included in data_b201
+##join the rows with data_b201
+
+data_bc100 <- bind_rows(data_b201, data_c301)  
+dim(data_bc100)    ### 439 rows and 17 columns
+
+##data_a100 contains demographic and academic scores indicators for NYc schools. Schools that lack data on academic scores which is our outcome of interest should not be included in the final analysis
+complete_data <- data_a100 %>%
+  rename(dbn = DBN) %>%
+  left_join(data_bc100)
+
+dim(complete_data)     ### 479 rows and 46 columns
+
+
+#map(complete_data, class)  ##check class of variables
+
+```
+
+To assess whether student, teacher and parent perceptions of NYC school quality are related to demographic and academic success metrics, look for significant correlations between perceptions scores and academic success metric (avg_sat_score)
+
+variables of interest: perceptions scores
+saf_p_11, saf_t_11, saf_s_11, saf_tot_11
+com_p_11, com_t_11, com_s_11, com_tot_11
+eng_p_11, eng_t_11, eng_s_11, eng_tot_11
+aca_p_11, aca_t_11, aca_s_11, aca_tot_11
+
+
+##Correlation between perception scores and average SAT scores
+```{r}
+cor_mat_all_1 <- complete_data %>%
+  drop_na() %>%
+  select(avg_sat_score, saf_p_11:aca_tot_11) %>%
+  cor(use = "pairwise.complete.obs")
+
+perception_avg_score <- cor_mat_all_1 %>%
+  as_tibble(rownames = "variable") %>%
+  select(variable, avg_sat_score) %>%
+  filter(avg_sat_score > 0.25|avg_sat_score < -0.25)
+
+#View(perception_avg_score)
+
+```
+
+Students' perception on all four metrics assessed were positively correlated with average sat scores ( r > 0.45)
+
+Parents' perception on safety and respect was the only parents' metric correlated with average sat scores (r = 0.29)
+
+Teachers' perception on safety and respect and academic expectations were positively correlated with average sat scores (r > 0.25)
+
+All categories perception on safety, communication and academic expectations were also positively correlated with average sat-scores (r >= 0.30)
+
+
+
+Use scatter plots to explore interesting relationships in greater detail
+```{r, reshape dataset and plot scatterplot}
+reshaped_data <- complete_data %>%
+  select(dbn, avg_sat_score, saf_p_11:aca_tot_11) %>%
+  pivot_longer(cols = saf_p_11:aca_tot_11,
+               names_to = "perception",
+               values_to = "scores")
+dim(reshaped_data) ## 7664 rows, 4 columns
+#View (reshaped_data)
+
+reshaped_data %>% 
+  ggplot(aes(x=scores,y = avg_sat_score)) +
+  geom_point() +
+  facet_wrap(~perception) + 
+  theme(panel.background = element_blank()) +
+  labs(title = "Relationship between perception scores and average SAT score",
+       subtitle = "NYC High Schools, 2011",
+       y = "Average SAT scores",
+       x = "Perceptions scores for different metrics")
+  
+
+```
+
+
+Check whether parents and student have the same perception for the school quality metrics they were surveyed about.* 
+
+Create a new column for response type and metric
+
+```{r}
+reshaped_data %>% pull(perception) %>% unique
+
+
+
+reshaped_data_2 <- reshaped_data %>%
+  mutate(response_type =  str_sub(perception, start = 4, end = 6 )) %>%
+  mutate(response_type = case_when(
+    response_type == "_p_" ~ "parent",
+    response_type == "_s_" ~ "student",
+    response_type == "_t_" ~ "teacher",
+    response_type == "_to" ~ "all"
+  )) %>%
+  mutate(metric = str_sub(perception, start = 1, end = 3))
+
+#View(reshaped_data)
+
+```
+
+
+
+Boxplot of perception scores by response type
+```{r}
+ggplot(data = reshaped_data_2) +
+  aes(x = response_type, y = scores) +
+  geom_boxplot() +
+  labs(title = "Perception scores by response type",
+       y = "Perception scores",
+       x = "Response_type") +
+  theme(panel.background = element_blank())
+
+
+###Mean perception scores by response type
+reshaped_data_2 %>% 
+  group_by(response_type) %>%
+  summarise(average_score = mean(scores, na.rm = TRUE))
+
+```
+
+
+Boxplot of perception scores by safety metrics
+```{r}
+ggplot(data = reshaped_data_2) +
+  aes(x = metric, y = scores) +
+  geom_boxplot() +
+  labs(title = "Perception scores by response type",
+       y = "Perception scores",
+       x = "Response_type") +
+  theme(panel.background = element_blank())
+
+###Mean perception scores by response type
+reshaped_data_2 %>% 
+  group_by(metric) %>%
+  summarise(average_score = mean(scores, na.rm = TRUE))
+
+```
